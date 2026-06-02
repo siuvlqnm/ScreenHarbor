@@ -14,6 +14,10 @@ npm run dev --workspace @screenharbor/api
 - `POST /auth/telegram`
 - `GET /media`
 - `GET /media/:id`
+- `GET /media/:id/status`
+- `POST /media/:id/status`
 - `GET /resources/latest`
 
 The API reads from D1 when bindings and migrations are available. It falls back to demo responses during early local development.
+
+User-specific routes read `X-Telegram-Init-Data`. During local development without Telegram init data, they use the seeded `demo-contributor` account.

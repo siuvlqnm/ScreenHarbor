@@ -19,3 +19,5 @@ VITE_API_BASE_URL=http://localhost:8787
 ```
 
 If the API is not configured or unavailable, the app keeps using bundled sample data.
+
+Watch status buttons optimistically update the UI and save through `POST /media/:id/status` when the API is configured.

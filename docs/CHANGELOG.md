@@ -2,6 +2,13 @@
 
 ## 2026-06-02
 
+### Watch status persistence
+
+- Added shared `UserMediaStatus` typing for user media tracking.
+- Added API routes to fetch and save per-user watch status at `/media/:id/status`.
+- Added D1 upsert logic for `user_media_status`, using Telegram init data when available and the seeded demo user locally.
+- Connected the Mini App watch status controls to the API with optimistic UI updates and local fallback.
+
 ### API data wiring
 
 - Connected the web shell to the Workers API through `VITE_API_BASE_URL`, with bundled sample data as a fallback.

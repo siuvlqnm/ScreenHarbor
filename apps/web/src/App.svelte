@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fetchLatestResources, fetchMediaItems } from "./lib/api";
+  import { fetchLatestResources, fetchMediaItems, fetchUserMediaStatus, saveUserMediaStatus } from "./lib/api";
   import { featuredMedia, latestResources as sampleLatestResources } from "./lib/sample-data";
   import PosterImage from "./lib/PosterImage.svelte";
   import type { MediaItem, ResourcePost, WatchStatus } from "@screenharbor/shared";
@@ -24,6 +24,10 @@
   let latestResources: ResourcePost[] = sampleLatestResources;
   let dataSource = "本地样例";
   let isLoading = true;
+  let savedStatuses: Record<string, WatchStatus> = {};
+  let statusMessage = "未保存";
+  let isStatusSaving = false;
+  let statusRequestId = 0;
 
   onMount(async () => {
     try {
@@ -32,8 +36,10 @@
       latestResources = resourceResponse;
       selectedMedia = mediaResponse[0] ?? featuredMedia[0];
       dataSource = "API 数据";
+      await loadSelectedStatus(selectedMedia.id);
     } catch {
       dataSource = "本地样例";
+      selectedStatus = savedStatuses[selectedMedia.id] ?? "planned";
     } finally {
       isLoading = false;
     }
@@ -49,6 +55,10 @@
     selectedMedia = filteredMedia[0];
   }
 
+  $: if (selectedMedia.id) {
+    void loadSelectedStatus(selectedMedia.id);
+  }
+
   function typeLabel(type: MediaItem["type"]) {
     return {
       movie: "电影",
@@ -57,6 +67,48 @@
       documentary: "纪录片",
       variety: "综艺"
     }[type];
+  }
+
+  async function loadSelectedStatus(mediaItemId: string) {
+    const requestId = ++statusRequestId;
+    selectedStatus = savedStatuses[mediaItemId] ?? "planned";
+    statusMessage = savedStatuses[mediaItemId] ? "已加载" : "未保存";
+
+    try {
+      const remoteStatus = await fetchUserMediaStatus(mediaItemId, telegramInitData);
+
+      if (requestId !== statusRequestId) {
+        return;
+      }
+
+      if (remoteStatus) {
+        savedStatuses = { ...savedStatuses, [mediaItemId]: remoteStatus.status };
+        selectedStatus = remoteStatus.status;
+        statusMessage = "已同步";
+      }
+    } catch {
+      if (requestId === statusRequestId) {
+        statusMessage = "本地状态";
+      }
+    }
+  }
+
+  async function selectStatus(status: WatchStatus) {
+    selectedStatus = status;
+    savedStatuses = { ...savedStatuses, [selectedMedia.id]: status };
+    isStatusSaving = true;
+    statusMessage = "保存中";
+
+    try {
+      const remoteStatus = await saveUserMediaStatus(selectedMedia.id, status, telegramInitData);
+      savedStatuses = { ...savedStatuses, [selectedMedia.id]: remoteStatus.status };
+      selectedStatus = remoteStatus.status;
+      statusMessage = "已保存";
+    } catch {
+      statusMessage = "已本地暂存";
+    } finally {
+      isStatusSaving = false;
+    }
   }
 </script>
 
@@ -118,11 +170,16 @@
         </div>
         <div class="status-group" aria-label="观影状态">
           {#each watchStatuses as status}
-            <button class:active={selectedStatus === status.value} on:click={() => (selectedStatus = status.value)}>
+            <button
+              class:active={selectedStatus === status.value}
+              disabled={isStatusSaving}
+              on:click={() => selectStatus(status.value)}
+            >
               {status.label}
             </button>
           {/each}
         </div>
+        <p class="status-message">{statusMessage}</p>
         <a href={selectedMedia.telegraphUrl} target="_blank" rel="noreferrer">Telegraph 长文</a>
       </div>
     </article>

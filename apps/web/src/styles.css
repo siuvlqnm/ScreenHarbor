@@ -125,6 +125,11 @@ h1 {
   color: #1e40af;
 }
 
+.status-group button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
 .content-grid {
   display: grid;
   grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.35fr);
@@ -220,6 +225,12 @@ h1 {
   margin-top: 16px;
   color: #2563eb;
   font-weight: 700;
+}
+
+.status-message {
+  margin: 10px 0 0;
+  color: #64748b;
+  font-size: 0.9rem;
 }
 
 .resource-section {

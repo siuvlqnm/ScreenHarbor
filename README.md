@@ -69,6 +69,6 @@ The first milestone focuses on the smallest complete loop:
 
 - Telegram Mini App entry and user identity verification.
 - Media list, search, filters, and detail page.
-- Watch status, rating, and short review.
+- Watch status saving, rating, and short review.
 - Resource submission, visibility control, review workflow, reports, and invalid markers.
 - Telegraph long-form content links.

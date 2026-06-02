@@ -35,3 +35,16 @@ export interface ResourcePost {
   requiredPoints: number;
   status: "pending" | "published" | "rejected" | "hidden" | "invalid" | "deleted";
 }
+
+export interface UserMediaStatus {
+  id: string;
+  userId: string;
+  mediaItemId: string;
+  status: WatchStatus;
+  rating?: number;
+  progress?: string;
+  note?: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+}
