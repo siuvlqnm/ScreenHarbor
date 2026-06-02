@@ -29,6 +29,12 @@ Start the Workers API:
 npm run dev:api
 ```
 
+Use the API from the Mini App by setting `apps/web/.env`:
+
+```bash
+VITE_API_BASE_URL=http://localhost:8787
+```
+
 Run type checks:
 
 ```bash
@@ -48,6 +54,8 @@ Apply the initial schema:
 ```bash
 npx wrangler d1 migrations apply screenharbor --local
 ```
+
+The migrations include demo media and resource rows so the app has realistic local data after the schema is applied.
 
 Set the Telegram bot token for production verification:
 

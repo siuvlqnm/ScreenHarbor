@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { featuredMedia, latestResources } from "./lib/sample-data";
+  import { onMount } from "svelte";
+  import { fetchLatestResources, fetchMediaItems } from "./lib/api";
+  import { featuredMedia, latestResources as sampleLatestResources } from "./lib/sample-data";
   import PosterImage from "./lib/PosterImage.svelte";
-  import type { MediaItem, WatchStatus } from "@screenharbor/shared";
+  import type { MediaItem, ResourcePost, WatchStatus } from "@screenharbor/shared";
 
   export let telegramInitData = "";
 
@@ -18,12 +20,34 @@
   let selectedMedia: MediaItem = featuredMedia[0];
   let selectedStatus: WatchStatus = "planned";
   let query = "";
+  let mediaItems: MediaItem[] = featuredMedia;
+  let latestResources: ResourcePost[] = sampleLatestResources;
+  let dataSource = "本地样例";
+  let isLoading = true;
 
-  $: filteredMedia = featuredMedia.filter((item) => {
+  onMount(async () => {
+    try {
+      const [mediaResponse, resourceResponse] = await Promise.all([fetchMediaItems(), fetchLatestResources()]);
+      mediaItems = mediaResponse;
+      latestResources = resourceResponse;
+      selectedMedia = mediaResponse[0] ?? featuredMedia[0];
+      dataSource = "API 数据";
+    } catch {
+      dataSource = "本地样例";
+    } finally {
+      isLoading = false;
+    }
+  });
+
+  $: filteredMedia = mediaItems.filter((item) => {
     const matchesType = selectedFilter === "全部" || typeLabel(item.type) === selectedFilter;
     const text = `${item.chineseTitle} ${item.originalTitle ?? ""} ${item.englishTitle ?? ""} ${item.tags.join(" ")}`;
     return matchesType && text.toLowerCase().includes(query.toLowerCase());
   });
+
+  $: if (!filteredMedia.some((item) => item.id === selectedMedia.id) && filteredMedia[0]) {
+    selectedMedia = filteredMedia[0];
+  }
 
   function typeLabel(type: MediaItem["type"]) {
     return {
@@ -43,7 +67,7 @@
       <h1>幕屿</h1>
     </div>
     <div class="telegram-state" class:active={telegramInitData}>
-      {telegramInitData ? "Telegram 已识别" : "本地预览"}
+      {telegramInitData ? "Telegram 已识别" : dataSource}
     </div>
   </header>
 
@@ -63,7 +87,7 @@
     <div class="media-list" aria-label="影视条目">
       <div class="section-heading">
         <h2>最近更新</h2>
-        <span>{filteredMedia.length} 个条目</span>
+        <span>{isLoading ? "加载中" : `${filteredMedia.length} 个条目`}</span>
       </div>
 
       {#each filteredMedia as item}

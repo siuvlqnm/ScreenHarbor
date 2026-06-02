@@ -1,4 +1,4 @@
-import type { MediaItem } from "@screenharbor/shared";
+import type { MediaItem, MediaType, ResourcePost, ResourceType, ResourceVisibility } from "@screenharbor/shared";
 
 export interface Env {
   DB: D1Database;
@@ -23,6 +23,27 @@ const demoMedia: MediaItem[] = [
     reviewCount: 1524,
     resourceCount: 18,
     telegraphUrl: "https://telegra.ph/"
+  }
+];
+
+const demoResources: ResourcePost[] = [
+  {
+    id: "res-001",
+    mediaItemId: "frieren",
+    title: "WEB-DL 1080p 简繁字幕合集",
+    type: "subtitle",
+    visibility: "login_only",
+    requiredPoints: 0,
+    status: "published"
+  },
+  {
+    id: "res-002",
+    mediaItemId: "the-wandering-earth-2",
+    title: "蓝光原盘版本说明",
+    type: "cloud_drive",
+    visibility: "points_only",
+    requiredPoints: 20,
+    status: "pending"
   }
 ];
 
@@ -52,18 +73,159 @@ export default {
     }
 
     if (url.pathname === "/media" && request.method === "GET") {
-      return json({ items: demoMedia });
+      const items = await listMediaItems(env);
+      return json({ items });
     }
 
     const mediaMatch = url.pathname.match(/^\/media\/([^/]+)$/);
     if (mediaMatch && request.method === "GET") {
-      const item = demoMedia.find((media) => media.id === mediaMatch[1]);
+      const item = await getMediaItem(env, mediaMatch[1]);
       return item ? json({ item }) : json({ error: "Media item not found" }, 404);
+    }
+
+    if (url.pathname === "/resources/latest" && request.method === "GET") {
+      const items = await listLatestResources(env);
+      return json({ items });
     }
 
     return json({ error: "Route not found" }, 404);
   }
 };
+
+interface MediaRow {
+  id: string;
+  chinese_title: string;
+  original_title: string | null;
+  english_title: string | null;
+  media_type: string;
+  release_year: number | null;
+  regions: string;
+  languages: string;
+  poster_object_key: string | null;
+  overview: string;
+  average_rating: number | null;
+  review_count: number;
+  resource_count: number;
+  telegraph_url: string | null;
+  tags: string | null;
+}
+
+interface ResourceRow {
+  id: string;
+  media_item_id: string;
+  title: string;
+  resource_type: string;
+  visibility: string;
+  required_points: number;
+  status: string;
+}
+
+async function listMediaItems(env: Env): Promise<MediaItem[]> {
+  try {
+    const result = await env.DB.prepare(
+      `SELECT
+        media_items.*,
+        COALESCE(json_group_array(tags.name) FILTER (WHERE tags.name IS NOT NULL), '[]') AS tags
+      FROM media_items
+      LEFT JOIN media_item_tags ON media_item_tags.media_item_id = media_items.id
+      LEFT JOIN tags ON tags.id = media_item_tags.tag_id
+      GROUP BY media_items.id
+      ORDER BY media_items.updated_at DESC
+      LIMIT 24`
+    ).all<MediaRow>();
+
+    const items = result.results.map(mapMediaRow);
+    return items.length > 0 ? items : demoMedia;
+  } catch {
+    return demoMedia;
+  }
+}
+
+async function getMediaItem(env: Env, id: string): Promise<MediaItem | undefined> {
+  try {
+    const row = await env.DB.prepare(
+      `SELECT
+        media_items.*,
+        COALESCE(json_group_array(tags.name) FILTER (WHERE tags.name IS NOT NULL), '[]') AS tags
+      FROM media_items
+      LEFT JOIN media_item_tags ON media_item_tags.media_item_id = media_items.id
+      LEFT JOIN tags ON tags.id = media_item_tags.tag_id
+      WHERE media_items.id = ?
+      GROUP BY media_items.id`
+    )
+      .bind(id)
+      .first<MediaRow>();
+
+    return row ? mapMediaRow(row) : demoMedia.find((media) => media.id === id);
+  } catch {
+    return demoMedia.find((media) => media.id === id);
+  }
+}
+
+async function listLatestResources(env: Env): Promise<ResourcePost[]> {
+  try {
+    const result = await env.DB.prepare(
+      `SELECT
+        id,
+        media_item_id,
+        title,
+        resource_type,
+        visibility,
+        required_points,
+        status
+      FROM resource_posts
+      WHERE status IN ('pending', 'published')
+      ORDER BY created_at DESC
+      LIMIT 12`
+    ).all<ResourceRow>();
+
+    const items = result.results.map(mapResourceRow);
+    return items.length > 0 ? items : demoResources;
+  } catch {
+    return demoResources;
+  }
+}
+
+function mapMediaRow(row: MediaRow): MediaItem {
+  return {
+    id: row.id,
+    chineseTitle: row.chinese_title,
+    originalTitle: row.original_title ?? undefined,
+    englishTitle: row.english_title ?? undefined,
+    type: row.media_type as MediaType,
+    year: row.release_year ?? 0,
+    regions: parseJsonArray(row.regions),
+    languages: parseJsonArray(row.languages),
+    posterUrl: row.poster_object_key ?? undefined,
+    overview: row.overview,
+    tags: parseJsonArray(row.tags ?? "[]"),
+    averageRating: row.average_rating ?? undefined,
+    reviewCount: row.review_count,
+    resourceCount: row.resource_count,
+    telegraphUrl: row.telegraph_url ?? undefined
+  };
+}
+
+function mapResourceRow(row: ResourceRow): ResourcePost {
+  return {
+    id: row.id,
+    mediaItemId: row.media_item_id,
+    title: row.title,
+    type: row.resource_type as ResourceType,
+    visibility: row.visibility as ResourceVisibility,
+    requiredPoints: row.required_points,
+    status: row.status as ResourcePost["status"]
+  };
+}
+
+function parseJsonArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

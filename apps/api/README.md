@@ -14,5 +14,6 @@ npm run dev --workspace @screenharbor/api
 - `POST /auth/telegram`
 - `GET /media`
 - `GET /media/:id`
+- `GET /resources/latest`
 
-The first implementation includes demo media responses so the web app can be built before D1 seed data exists.
+The API reads from D1 when bindings and migrations are available. It falls back to demo responses during early local development.
