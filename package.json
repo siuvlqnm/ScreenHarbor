@@ -1,0 +1,22 @@
+{
+  "name": "screenharbor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev --workspace @screenharbor/web",
+    "dev:web": "npm run dev --workspace @screenharbor/web",
+    "dev:api": "npm run dev --workspace @screenharbor/api",
+    "build": "npm run build --workspaces",
+    "check": "npm run check --workspaces",
+    "format": "prettier --write ."
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3"
+  }
+}
