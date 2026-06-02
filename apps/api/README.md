@@ -16,7 +16,14 @@ npm run dev --workspace @screenharbor/api
 - `GET /media/:id`
 - `GET /media/:id/status`
 - `POST /media/:id/status`
+- `GET /media/:id/reviews`
+- `POST /media/:id/reviews`
+- `GET /media/:id/resources`
+- `POST /media/:id/resources`
 - `GET /resources/latest`
+- `POST /reports`
+- `GET /admin/resources/pending`
+- `POST /admin/resources/:id/moderate`
 
 The API reads from D1 when bindings and migrations are available. It falls back to demo responses during early local development.
 

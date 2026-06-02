@@ -31,9 +31,15 @@ export interface ResourcePost {
   mediaItemId: string;
   title: string;
   type: ResourceType;
+  url?: string;
+  versionNote?: string;
+  fileSize?: string;
+  resolution?: string;
+  subtitleNote?: string;
   visibility: ResourceVisibility;
   requiredPoints: number;
   status: "pending" | "published" | "rejected" | "hidden" | "invalid" | "deleted";
+  createdAt?: string;
 }
 
 export interface UserMediaStatus {
@@ -47,4 +53,34 @@ export interface UserMediaStatus {
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
+}
+
+export interface UserReview {
+  id: string;
+  userId: string;
+  mediaItemId: string;
+  displayName: string;
+  rating?: number;
+  body: string;
+  containsSpoiler: boolean;
+  likeCount: number;
+  createdAt: string;
+}
+
+export interface Report {
+  id: string;
+  targetType: "resource" | "review" | "media_item";
+  targetId: string;
+  reason: string;
+  status: "open" | "resolved" | "rejected";
+  createdAt: string;
+}
+
+export interface ModerationLog {
+  id: string;
+  targetType: string;
+  targetId: string;
+  action: string;
+  note?: string;
+  createdAt: string;
 }

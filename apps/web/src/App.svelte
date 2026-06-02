@@ -1,9 +1,31 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { fetchLatestResources, fetchMediaItems, fetchUserMediaStatus, saveUserMediaStatus } from "./lib/api";
+  import {
+    createReport,
+    createResource,
+    createReview,
+    fetchLatestResources,
+    fetchMediaItems,
+    fetchMediaResources,
+    fetchMediaReviews,
+    fetchPendingResources,
+    fetchUserMediaStatus,
+    moderateResource,
+    saveUserMediaStatus
+  } from "./lib/api";
   import { featuredMedia, latestResources as sampleLatestResources } from "./lib/sample-data";
   import PosterImage from "./lib/PosterImage.svelte";
-  import type { MediaItem, ResourcePost, WatchStatus } from "@screenharbor/shared";
+  import {
+    resourceTypes,
+    resourceVisibilities,
+    type MediaItem,
+    type Report,
+    type ResourcePost,
+    type ResourceType,
+    type ResourceVisibility,
+    type UserReview,
+    type WatchStatus
+  } from "@screenharbor/shared";
 
   export let telegramInitData = "";
 
@@ -28,6 +50,24 @@
   let statusMessage = "未保存";
   let isStatusSaving = false;
   let statusRequestId = 0;
+  let selectedMediaId = selectedMedia.id;
+  let mediaResources: ResourcePost[] = sampleLatestResources.filter((resource) => resource.mediaItemId === selectedMedia.id);
+  let reviews: UserReview[] = [];
+  let pendingResources: ResourcePost[] = [];
+  let reviewBody = "";
+  let reviewRating = 8;
+  let reviewContainsSpoiler = false;
+  let reviewMessage = "";
+  let resourceTitle = "";
+  let resourceUrl = "";
+  let resourceType: ResourceType = "cloud_drive";
+  let resourceVisibility: ResourceVisibility = "login_only";
+  let resourcePoints = 0;
+  let resourceNote = "";
+  let resourceMessage = "";
+  let reportReason = "";
+  let reportMessage = "";
+  let moderationMessage = "";
 
   onMount(async () => {
     try {
@@ -35,8 +75,11 @@
       mediaItems = mediaResponse;
       latestResources = resourceResponse;
       selectedMedia = mediaResponse[0] ?? featuredMedia[0];
+      selectedMediaId = selectedMedia.id;
       dataSource = "API 数据";
       await loadSelectedStatus(selectedMedia.id);
+      await loadSelectedMediaData(selectedMedia.id);
+      await loadPendingResources();
     } catch {
       dataSource = "本地样例";
       selectedStatus = savedStatuses[selectedMedia.id] ?? "planned";
@@ -55,8 +98,10 @@
     selectedMedia = filteredMedia[0];
   }
 
-  $: if (selectedMedia.id) {
+  $: if (selectedMedia.id && selectedMedia.id !== selectedMediaId) {
+    selectedMediaId = selectedMedia.id;
     void loadSelectedStatus(selectedMedia.id);
+    void loadSelectedMediaData(selectedMedia.id);
   }
 
   function typeLabel(type: MediaItem["type"]) {
@@ -109,6 +154,128 @@
     } finally {
       isStatusSaving = false;
     }
+  }
+
+  async function loadSelectedMediaData(mediaItemId: string) {
+    try {
+      const [resourceResponse, reviewResponse] = await Promise.all([
+        fetchMediaResources(mediaItemId),
+        fetchMediaReviews(mediaItemId)
+      ]);
+      mediaResources = resourceResponse;
+      reviews = reviewResponse;
+    } catch {
+      mediaResources = latestResources.filter((resource) => resource.mediaItemId === mediaItemId);
+      reviews = [];
+    }
+  }
+
+  async function loadPendingResources() {
+    try {
+      pendingResources = await fetchPendingResources(telegramInitData);
+    } catch {
+      pendingResources = latestResources.filter((resource) => resource.status === "pending");
+    }
+  }
+
+  async function submitReview() {
+    if (!reviewBody.trim()) {
+      reviewMessage = "请输入短评";
+      return;
+    }
+
+    try {
+      const review = await createReview(
+        selectedMedia.id,
+        { body: reviewBody, containsSpoiler: reviewContainsSpoiler, rating: reviewRating },
+        telegramInitData
+      );
+      reviews = [review, ...reviews];
+      reviewBody = "";
+      reviewContainsSpoiler = false;
+      reviewMessage = "短评已发布";
+    } catch {
+      reviewMessage = "API 不可用，短评未保存";
+    }
+  }
+
+  async function submitResource() {
+    if (!resourceTitle.trim() || !resourceUrl.trim()) {
+      resourceMessage = "请填写标题和链接";
+      return;
+    }
+
+    try {
+      const resource = await createResource(
+        selectedMedia.id,
+        {
+          requiredPoints: resourcePoints,
+          title: resourceTitle,
+          type: resourceType,
+          url: resourceUrl,
+          versionNote: resourceNote,
+          visibility: resourceVisibility
+        },
+        telegramInitData
+      );
+      mediaResources = [resource, ...mediaResources];
+      pendingResources = [resource, ...pendingResources];
+      latestResources = [resource, ...latestResources];
+      resourceTitle = "";
+      resourceUrl = "";
+      resourceNote = "";
+      resourcePoints = 0;
+      resourceMessage = "资源已提交审核";
+    } catch {
+      resourceMessage = "API 不可用，资源未提交";
+    }
+  }
+
+  async function submitReport(targetType: Report["targetType"], targetId: string) {
+    const reason = reportReason.trim() || "用户标记为失效或违规";
+
+    try {
+      await createReport({ reason, targetId, targetType }, telegramInitData);
+      reportReason = "";
+      reportMessage = "举报已提交";
+    } catch {
+      reportMessage = "API 不可用，举报未提交";
+    }
+  }
+
+  async function reviewResource(resource: ResourcePost, action: "publish" | "reject" | "hide") {
+    try {
+      const updated = await moderateResource(resource.id, action, telegramInitData);
+      pendingResources = pendingResources.filter((item) => item.id !== resource.id);
+
+      if (updated && updated.mediaItemId === selectedMedia.id) {
+        mediaResources = mediaResources.map((item) => (item.id === updated.id ? updated : item));
+      }
+
+      moderationMessage = action === "publish" ? "资源已发布" : "资源已处理";
+    } catch {
+      moderationMessage = "API 不可用，审核未保存";
+    }
+  }
+
+  function resourceTypeLabel(type: ResourceType) {
+    return {
+      cloud_drive: "网盘",
+      ed2k: "ed2k",
+      other: "其他",
+      subtitle: "字幕",
+      torrent: "torrent"
+    }[type];
+  }
+
+  function visibilityLabel(visibility: ResourceVisibility) {
+    return {
+      author_only: "仅作者",
+      login_only: "登录可见",
+      points_only: "积分可见",
+      public: "公开",
+      review_only: "审核可见"
+    }[visibility];
   }
 </script>
 
@@ -188,29 +355,119 @@
   <section class="resource-section">
     <div>
       <div class="section-heading">
-        <h2>新增资源</h2>
-        <span>待审核优先</span>
+        <h2>条目资源</h2>
+        <span>{mediaResources.length} 条</span>
       </div>
-      {#each latestResources as resource}
+      {#each mediaResources as resource}
         <div class="resource-row">
           <strong>{resource.title}</strong>
-          <span>{resource.type} · {resource.visibility} · {resource.status}</span>
+          <span>
+            {resourceTypeLabel(resource.type)} · {visibilityLabel(resource.visibility)} · {resource.status}
+            {#if resource.requiredPoints > 0}
+              · {resource.requiredPoints} 积分
+            {/if}
+          </span>
+          {#if resource.versionNote}
+            <p>{resource.versionNote}</p>
+          {/if}
+          <button type="button" on:click={() => submitReport("resource", resource.id)}>标记失效</button>
         </div>
+      {:else}
+        <p class="empty">这个条目还没有资源。</p>
       {/each}
     </div>
 
     <form class="submit-form">
       <h2>发布资源</h2>
-      <input placeholder="资源标题" />
-      <select>
-        <option>torrent</option>
-        <option>ed2k</option>
-        <option>网盘</option>
-        <option>字幕</option>
-        <option>其他</option>
+      <input bind:value={resourceTitle} placeholder="资源标题" />
+      <input bind:value={resourceUrl} placeholder="链接地址" />
+      <select bind:value={resourceType}>
+        {#each resourceTypes as type}
+          <option value={type}>{resourceTypeLabel(type)}</option>
+        {/each}
       </select>
-      <textarea placeholder="版本、清晰度、字幕、大小等说明"></textarea>
-      <button type="button">提交审核</button>
+      <select bind:value={resourceVisibility}>
+        {#each resourceVisibilities as visibility}
+          <option value={visibility}>{visibilityLabel(visibility)}</option>
+        {/each}
+      </select>
+      <input bind:value={resourcePoints} min="0" type="number" placeholder="所需积分" />
+      <textarea bind:value={resourceNote} placeholder="版本、清晰度、字幕、大小等说明"></textarea>
+      <button type="button" on:click={submitResource}>提交审核</button>
+      {#if resourceMessage}
+        <p class="form-message">{resourceMessage}</p>
+      {/if}
+    </form>
+  </section>
+
+  <section class="review-section">
+    <div>
+      <div class="section-heading">
+        <h2>短评</h2>
+        <span>{reviews.length} 条</span>
+      </div>
+      {#each reviews as review}
+        <article class="review-row">
+          <strong>{review.displayName}</strong>
+          <span>
+            {review.rating ? `${review.rating} 分` : "未评分"}
+            {#if review.containsSpoiler}
+              · 剧透
+            {/if}
+          </span>
+          <p>{review.body}</p>
+          <button type="button" on:click={() => submitReport("review", review.id)}>举报短评</button>
+        </article>
+      {:else}
+        <p class="empty">还没有短评。</p>
+      {/each}
+    </div>
+
+    <form class="submit-form">
+      <h2>发布短评</h2>
+      <input bind:value={reviewRating} min="1" max="10" type="number" placeholder="评分 1-10" />
+      <textarea bind:value={reviewBody} placeholder="写一条短评"></textarea>
+      <label class="inline-check">
+        <input bind:checked={reviewContainsSpoiler} type="checkbox" />
+        <span>包含剧透</span>
+      </label>
+      <button type="button" on:click={submitReview}>发布短评</button>
+      {#if reviewMessage}
+        <p class="form-message">{reviewMessage}</p>
+      {/if}
+    </form>
+  </section>
+
+  <section class="admin-section">
+    <div>
+      <div class="section-heading">
+        <h2>资源审核</h2>
+        <span>{pendingResources.length} 待处理</span>
+      </div>
+      {#each pendingResources as resource}
+        <div class="resource-row">
+          <strong>{resource.title}</strong>
+          <span>{resource.mediaItemId} · {resourceTypeLabel(resource.type)} · {visibilityLabel(resource.visibility)}</span>
+          <div class="action-row">
+            <button type="button" on:click={() => reviewResource(resource, "publish")}>通过</button>
+            <button type="button" on:click={() => reviewResource(resource, "reject")}>拒绝</button>
+          </div>
+        </div>
+      {:else}
+        <p class="empty">没有待审核资源。</p>
+      {/each}
+      {#if moderationMessage}
+        <p class="form-message">{moderationMessage}</p>
+      {/if}
+    </div>
+
+    <form class="submit-form">
+      <h2>举报说明</h2>
+      <textarea bind:value={reportReason} placeholder="失效、违规或纠错说明"></textarea>
+      <button type="button" on:click={() => submitReport("media_item", selectedMedia.id)}>举报条目</button>
+      {#if reportMessage}
+        <p class="form-message">{reportMessage}</p>
+      {/if}
     </form>
   </section>
 </main>

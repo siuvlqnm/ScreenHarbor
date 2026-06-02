@@ -72,3 +72,5 @@ The first milestone focuses on the smallest complete loop:
 - Watch status saving, rating, and short review.
 - Resource submission, visibility control, review workflow, reports, and invalid markers.
 - Telegraph long-form content links.
+
+The current MVP scaffold includes local demo data, D1-backed API routes, optimistic Mini App interactions, and a compact review queue for resource moderation.

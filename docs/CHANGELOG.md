@@ -2,6 +2,13 @@
 
 ## 2026-06-02
 
+### MVP interaction loop
+
+- Added API routes for short reviews, per-title resources, resource submission, reports, and resource moderation.
+- Connected the Mini App to reviews, resource submission, report actions, and a compact moderation queue.
+- Extended shared domain types for reviews, reports, moderation logs, and richer resource metadata.
+- Kept the MVP flow scoped to Telegram identity, media browsing, watch status, short reviews, resource submission, reporting, and admin review.
+
 ### Watch status persistence
 
 - Added shared `UserMediaStatus` typing for user media tracking.

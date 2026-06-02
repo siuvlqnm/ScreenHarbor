@@ -1,10 +1,14 @@
 import {
+  resourceTypes,
+  resourceVisibilities,
   watchStatuses,
+  type Report,
   type MediaItem,
   type MediaType,
   type ResourcePost,
   type ResourceType,
   type ResourceVisibility,
+  type UserReview,
   type UserMediaStatus,
   type WatchStatus
 } from "@screenharbor/shared";
@@ -97,6 +101,38 @@ export default {
       return json({ items });
     }
 
+    if (url.pathname === "/admin/resources/pending" && request.method === "GET") {
+      await getCurrentUser(request, env);
+      const items = await listModerationResources(env);
+      return json({ items });
+    }
+
+    const moderateResourceMatch = url.pathname.match(/^\/admin\/resources\/([^/]+)\/moderate$/);
+    if (moderateResourceMatch && request.method === "POST") {
+      const user = await getCurrentUser(request, env);
+      const body = await readJson<{ action?: "publish" | "reject" | "hide"; note?: string }>(request);
+
+      if (!body.action || !["publish", "reject", "hide"].includes(body.action)) {
+        return json({ error: "Invalid moderation action" }, 400);
+      }
+
+      const resource = await moderateResource(env, user.id, moderateResourceMatch[1], body.action, body.note);
+      return json({ resource });
+    }
+
+    if (url.pathname === "/reports" && request.method === "POST") {
+      const user = await getCurrentUser(request, env);
+      const body = await readJson<{ targetType?: Report["targetType"]; targetId?: string; reason?: string }>(request);
+      const reason = trimOptional(body.reason);
+
+      if (!isReportTargetType(body.targetType) || !body.targetId || !reason) {
+        return json({ error: "Invalid report payload" }, 400);
+      }
+
+      const report = await createReport(env, user.id, body.targetType, body.targetId, reason);
+      return json({ report }, 201);
+    }
+
     const statusMatch = url.pathname.match(/^\/media\/([^/]+)\/status$/);
     if (statusMatch && request.method === "GET") {
       const user = await getCurrentUser(request, env);
@@ -119,6 +155,52 @@ export default {
         status: body.status
       });
       return json({ status });
+    }
+
+    const mediaResourcesMatch = url.pathname.match(/^\/media\/([^/]+)\/resources$/);
+    if (mediaResourcesMatch && request.method === "GET") {
+      const items = await listMediaResources(env, mediaResourcesMatch[1]);
+      return json({ items });
+    }
+
+    if (mediaResourcesMatch && request.method === "POST") {
+      const user = await getCurrentUser(request, env);
+      const body = await readJson<{
+        title?: string;
+        type?: ResourceType;
+        url?: string;
+        versionNote?: string;
+        fileSize?: string;
+        resolution?: string;
+        subtitleNote?: string;
+        visibility?: ResourceVisibility;
+        requiredPoints?: number;
+      }>(request);
+
+      if (!trimOptional(body.title) || !body.type || !isResourceType(body.type) || !trimOptional(body.url)) {
+        return json({ error: "Invalid resource payload" }, 400);
+      }
+
+      const resource = await createResourcePost(env, user.id, mediaResourcesMatch[1], body);
+      return json({ resource }, 201);
+    }
+
+    const mediaReviewsMatch = url.pathname.match(/^\/media\/([^/]+)\/reviews$/);
+    if (mediaReviewsMatch && request.method === "GET") {
+      const items = await listMediaReviews(env, mediaReviewsMatch[1]);
+      return json({ items });
+    }
+
+    if (mediaReviewsMatch && request.method === "POST") {
+      const user = await getCurrentUser(request, env);
+      const body = await readJson<{ body?: string; rating?: number; containsSpoiler?: boolean }>(request);
+
+      if (!trimOptional(body.body)) {
+        return json({ error: "Review body is required" }, 400);
+      }
+
+      const review = await createReview(env, user.id, mediaReviewsMatch[1], body);
+      return json({ review }, 201);
     }
 
     return json({ error: "Route not found" }, 404);
@@ -148,9 +230,15 @@ interface ResourceRow {
   media_item_id: string;
   title: string;
   resource_type: string;
+  url: string;
+  version_note: string | null;
+  file_size: string | null;
+  resolution: string | null;
+  subtitle_note: string | null;
   visibility: string;
   required_points: number;
   status: string;
+  created_at: string;
 }
 
 interface UserRow {
@@ -172,6 +260,27 @@ interface UserMediaStatusRow {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+}
+
+interface UserReviewRow {
+  id: string;
+  user_id: string;
+  media_item_id: string;
+  display_name: string | null;
+  rating: number | null;
+  body: string;
+  contains_spoiler: number;
+  like_count: number;
+  created_at: string;
+}
+
+interface ReportRow {
+  id: string;
+  target_type: string;
+  target_id: string;
+  reason: string;
+  status: string;
+  created_at: string;
 }
 
 async function listMediaItems(env: Env): Promise<MediaItem[]> {
@@ -224,9 +333,15 @@ async function listLatestResources(env: Env): Promise<ResourcePost[]> {
         media_item_id,
         title,
         resource_type,
+        url,
+        version_note,
+        file_size,
+        resolution,
+        subtitle_note,
         visibility,
         required_points,
-        status
+        status,
+        created_at
       FROM resource_posts
       WHERE status IN ('pending', 'published')
       ORDER BY created_at DESC
@@ -266,9 +381,350 @@ function mapResourceRow(row: ResourceRow): ResourcePost {
     mediaItemId: row.media_item_id,
     title: row.title,
     type: row.resource_type as ResourceType,
+    url: row.url,
+    versionNote: row.version_note ?? undefined,
+    fileSize: row.file_size ?? undefined,
+    resolution: row.resolution ?? undefined,
+    subtitleNote: row.subtitle_note ?? undefined,
     visibility: row.visibility as ResourceVisibility,
     requiredPoints: row.required_points,
-    status: row.status as ResourcePost["status"]
+    status: row.status as ResourcePost["status"],
+    createdAt: row.created_at
+  };
+}
+
+async function listMediaResources(env: Env, mediaItemId: string): Promise<ResourcePost[]> {
+  const result = await env.DB.prepare(
+    `SELECT
+      id,
+      media_item_id,
+      title,
+      resource_type,
+      url,
+      version_note,
+      file_size,
+      resolution,
+      subtitle_note,
+      visibility,
+      required_points,
+      status,
+      created_at
+    FROM resource_posts
+    WHERE media_item_id = ? AND status IN ('published', 'pending')
+    ORDER BY created_at DESC`
+  )
+    .bind(mediaItemId)
+    .all<ResourceRow>();
+
+  return result.results.map(mapResourceRow);
+}
+
+async function listModerationResources(env: Env): Promise<ResourcePost[]> {
+  const result = await env.DB.prepare(
+    `SELECT
+      id,
+      media_item_id,
+      title,
+      resource_type,
+      url,
+      version_note,
+      file_size,
+      resolution,
+      subtitle_note,
+      visibility,
+      required_points,
+      status,
+      created_at
+    FROM resource_posts
+    WHERE status = 'pending'
+    ORDER BY created_at ASC
+    LIMIT 50`
+  ).all<ResourceRow>();
+
+  return result.results.map(mapResourceRow);
+}
+
+async function createResourcePost(
+  env: Env,
+  userId: string,
+  mediaItemId: string,
+  input: {
+    title?: string;
+    type?: ResourceType;
+    url?: string;
+    versionNote?: string;
+    fileSize?: string;
+    resolution?: string;
+    subtitleNote?: string;
+    visibility?: ResourceVisibility;
+    requiredPoints?: number;
+  }
+): Promise<ResourcePost> {
+  const id = crypto.randomUUID();
+  const visibility = input.visibility && isResourceVisibility(input.visibility) ? input.visibility : "review_only";
+  const requiredPoints = Math.max(0, Math.trunc(input.requiredPoints ?? 0));
+  const priceType = requiredPoints > 0 ? "points" : "free";
+
+  await env.DB.prepare(
+    `INSERT INTO resource_posts (
+      id,
+      media_item_id,
+      author_user_id,
+      title,
+      resource_type,
+      url,
+      version_note,
+      file_size,
+      resolution,
+      subtitle_note,
+      visibility,
+      price_type,
+      required_points,
+      status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`
+  )
+    .bind(
+      id,
+      mediaItemId,
+      userId,
+      trimOptional(input.title),
+      input.type,
+      trimOptional(input.url),
+      trimOptional(input.versionNote),
+      trimOptional(input.fileSize),
+      trimOptional(input.resolution),
+      trimOptional(input.subtitleNote),
+      visibility,
+      priceType,
+      requiredPoints
+    )
+    .run();
+
+  await refreshMediaResourceCount(env, mediaItemId);
+
+  const resource = await getResourcePost(env, id);
+  if (!resource) {
+    throw new Error("Unable to create resource post");
+  }
+
+  return resource;
+}
+
+async function moderateResource(
+  env: Env,
+  moderatorUserId: string,
+  resourceId: string,
+  action: "publish" | "reject" | "hide",
+  note?: string
+): Promise<ResourcePost | null> {
+  const statusByAction = {
+    hide: "hidden",
+    publish: "published",
+    reject: "rejected"
+  } as const;
+
+  await env.DB.prepare("UPDATE resource_posts SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .bind(statusByAction[action], resourceId)
+    .run();
+
+  await env.DB.prepare(
+    `INSERT INTO moderation_logs (
+      id,
+      moderator_user_id,
+      target_type,
+      target_id,
+      action,
+      note
+    ) VALUES (?, ?, 'resource', ?, ?, ?)`
+  )
+    .bind(crypto.randomUUID(), moderatorUserId, resourceId, action, trimOptional(note))
+    .run();
+
+  const resource = await getResourcePost(env, resourceId);
+  if (resource) {
+    await refreshMediaResourceCount(env, resource.mediaItemId);
+  }
+
+  return resource;
+}
+
+async function getResourcePost(env: Env, id: string): Promise<ResourcePost | null> {
+  const row = await env.DB.prepare(
+    `SELECT
+      id,
+      media_item_id,
+      title,
+      resource_type,
+      url,
+      version_note,
+      file_size,
+      resolution,
+      subtitle_note,
+      visibility,
+      required_points,
+      status,
+      created_at
+    FROM resource_posts
+    WHERE id = ?`
+  )
+    .bind(id)
+    .first<ResourceRow>();
+
+  return row ? mapResourceRow(row) : null;
+}
+
+async function refreshMediaResourceCount(env: Env, mediaItemId: string) {
+  await env.DB.prepare(
+    `UPDATE media_items
+    SET resource_count = (
+      SELECT COUNT(*)
+      FROM resource_posts
+      WHERE media_item_id = ? AND status = 'published'
+    ),
+    updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`
+  )
+    .bind(mediaItemId, mediaItemId)
+    .run();
+}
+
+async function listMediaReviews(env: Env, mediaItemId: string): Promise<UserReview[]> {
+  const result = await env.DB.prepare(
+    `SELECT
+      user_reviews.id,
+      user_reviews.user_id,
+      user_reviews.media_item_id,
+      users.display_name,
+      user_reviews.rating,
+      user_reviews.body,
+      user_reviews.contains_spoiler,
+      user_reviews.like_count,
+      user_reviews.created_at
+    FROM user_reviews
+    LEFT JOIN users ON users.id = user_reviews.user_id
+    WHERE user_reviews.media_item_id = ?
+    ORDER BY user_reviews.created_at DESC
+    LIMIT 24`
+  )
+    .bind(mediaItemId)
+    .all<UserReviewRow>();
+
+  return result.results.map(mapReviewRow);
+}
+
+async function createReview(
+  env: Env,
+  userId: string,
+  mediaItemId: string,
+  input: { body?: string; rating?: number; containsSpoiler?: boolean }
+): Promise<UserReview> {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO user_reviews (
+      id,
+      user_id,
+      media_item_id,
+      rating,
+      body,
+      contains_spoiler
+    ) VALUES (?, ?, ?, ?, ?, ?)`
+  )
+    .bind(id, userId, mediaItemId, normalizeRating(input.rating), trimOptional(input.body), input.containsSpoiler ? 1 : 0)
+    .run();
+
+  await refreshMediaReviewSummary(env, mediaItemId);
+
+  const review = await env.DB.prepare(
+    `SELECT
+      user_reviews.id,
+      user_reviews.user_id,
+      user_reviews.media_item_id,
+      users.display_name,
+      user_reviews.rating,
+      user_reviews.body,
+      user_reviews.contains_spoiler,
+      user_reviews.like_count,
+      user_reviews.created_at
+    FROM user_reviews
+    LEFT JOIN users ON users.id = user_reviews.user_id
+    WHERE user_reviews.id = ?`
+  )
+    .bind(id)
+    .first<UserReviewRow>();
+
+  if (!review) {
+    throw new Error("Unable to create review");
+  }
+
+  return mapReviewRow(review);
+}
+
+async function refreshMediaReviewSummary(env: Env, mediaItemId: string) {
+  await env.DB.prepare(
+    `UPDATE media_items
+    SET
+      review_count = (SELECT COUNT(*) FROM user_reviews WHERE media_item_id = ?),
+      average_rating = (SELECT AVG(rating) FROM user_reviews WHERE media_item_id = ? AND rating IS NOT NULL),
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`
+  )
+    .bind(mediaItemId, mediaItemId, mediaItemId)
+    .run();
+}
+
+function mapReviewRow(row: UserReviewRow): UserReview {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    mediaItemId: row.media_item_id,
+    displayName: row.display_name ?? "匿名用户",
+    rating: row.rating ?? undefined,
+    body: row.body,
+    containsSpoiler: row.contains_spoiler === 1,
+    likeCount: row.like_count,
+    createdAt: row.created_at
+  };
+}
+
+async function createReport(
+  env: Env,
+  reporterUserId: string,
+  targetType: Report["targetType"],
+  targetId: string,
+  reason: string
+): Promise<Report> {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO reports (
+      id,
+      reporter_user_id,
+      target_type,
+      target_id,
+      reason
+    ) VALUES (?, ?, ?, ?, ?)`
+  )
+    .bind(id, reporterUserId, targetType, targetId, reason.trim())
+    .run();
+
+  const row = await env.DB.prepare("SELECT id, target_type, target_id, reason, status, created_at FROM reports WHERE id = ?")
+    .bind(id)
+    .first<ReportRow>();
+
+  if (!row) {
+    throw new Error("Unable to create report");
+  }
+
+  return mapReportRow(row);
+}
+
+function mapReportRow(row: ReportRow): Report {
+  return {
+    id: row.id,
+    targetType: row.target_type as Report["targetType"],
+    targetId: row.target_id,
+    reason: row.reason,
+    status: row.status as Report["status"],
+    createdAt: row.created_at
   };
 }
 
@@ -420,6 +876,18 @@ function parseTelegramUser(initData: string): { id: number; username?: string; d
 
 function isWatchStatus(status: string): status is WatchStatus {
   return watchStatuses.includes(status as WatchStatus);
+}
+
+function isResourceType(type: string): type is ResourceType {
+  return resourceTypes.includes(type as ResourceType);
+}
+
+function isResourceVisibility(visibility: string): visibility is ResourceVisibility {
+  return resourceVisibilities.includes(visibility as ResourceVisibility);
+}
+
+function isReportTargetType(targetType: string | undefined): targetType is Report["targetType"] {
+  return targetType === "resource" || targetType === "review" || targetType === "media_item";
 }
 
 function normalizeRating(rating: number | undefined): number | null {
